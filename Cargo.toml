@@ -5,5 +5,5 @@ authors = ["Debasish Ray Chawdhuri <debasish@geekyarticles.com>"]
 
 [dependencies]
 libsecp256k1 = "0.1.14"
-rust-crypto = "0.2.36"
-ring = "0.9.4"
+sha2 = "0.7.1"
+ring = "0.13.2"

@@ -59,6 +59,13 @@ impl VRFContext{
         }
     }
 
+    pub fn new_from_public_key(public_key:Jacobian) -> VRFContext{
+        VRFContext{
+            public_key: public_key,
+            secret_key: Scalar::default(),
+
+        }
+    }
 
 
 

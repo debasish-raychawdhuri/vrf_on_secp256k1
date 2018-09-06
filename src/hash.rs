@@ -14,7 +14,7 @@ pub fn hash_into_group(data: &[u8])-> Result<Affine, Error>{
     let mut hash2:[u8; 32] = [0; 32];
     loop{
         let mut sha = Sha256::new();
-        if nounce>128 {
+        if nounce>254 {
             break Err(Error::HashNotComputable(String::from("Hash is not computable")));;
         }
         nounce_byte[0]=nounce;

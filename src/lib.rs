@@ -124,7 +124,6 @@ fn get_jacobian_from_bytes(bytes:&[u8;33]) -> Result<Jacobian, Error>{
         Ok(affine_point) => {
             let mut jacobian = Jacobian::default();
             jacobian.set_ge(&affine_point);
-
             Ok(jacobian)
         },
         Err(_) => Err(Error::IllegalKeyError())
@@ -231,15 +230,16 @@ impl VRFContext{
         public_key.set_gej(&self.public_key);
         match hash_into_group(data){
             Ok(h) => {
-                let mut i_point = Jacobian::default();
                 match &self.secret_key{
                     Some(secret_key)=>{
+                        let mut i_point = Jacobian::default();
                         ECMULT_CONTEXT.ecmult_const(&mut i_point, &h, &secret_key);
                         let mut i_point_a = Affine::default();
                         i_point_a.set_gej(&i_point);
                         match get_random_integer(){
                             Ok(w)=>{
                                 let mut l = Jacobian::default();
+                                
                                 ECMULT_GEN_CONTEXT.ecmult_gen(&mut l, &w);
                                 let mut r = Jacobian::default();
                                 ECMULT_CONTEXT.ecmult_const(&mut r, &h, &w);

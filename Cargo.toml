@@ -2,6 +2,7 @@
 name = "vrf_on_secp256k1"
 version = "0.1.0"
 authors = ["Debasish Ray Chawdhuri <debasish@geekyarticles.com>"]
+repository = "https://github.com/debasish-raychawdhuri/vrf_on_secp256k1.git"
 
 [dependencies]
 libsecp256k1 = "0.1.14"

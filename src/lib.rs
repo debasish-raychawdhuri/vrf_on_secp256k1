@@ -73,6 +73,28 @@ impl VRF {
 
     }
 
+    pub fn get_vrf_value(&self) -> [u8;32]{
+        let mut sha = Sha256::new();
+
+        let mut hash_input = self.hash_input.clone();
+        hash_input.x.normalize();
+        hash_input.y.normalize();
+        let mut bytes = [0u8;33];
+        if hash_input.y.is_odd() {
+            bytes[0] = TAG_PUBKEY_ODD;
+        }else {
+            bytes[0] = TAG_PUBKEY_EVEN;
+        }
+        let mut x_bytes = [0u8;32];
+
+        hash_input.x.fill_b32(&mut x_bytes);
+        copy_elements(&mut bytes[1..33], &x_bytes);
+        sha.input(&bytes);
+        let hashv = sha.result();
+
+        copy_elements(&mut x_bytes, &hashv);
+        x_bytes
+    }
 
 }
 

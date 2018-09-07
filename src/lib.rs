@@ -10,12 +10,7 @@ use secp256k1::util::{TAG_PUBKEY_ODD, TAG_PUBKEY_EVEN};
 use ring::rand::{SystemRandom, SecureRandom};
 use sha2::{Sha256, Digest};
 
-#[derive(PartialEq, Debug)]
-pub struct VRF {
-    hash_input : Jacobian,
-    left_scaler : Scalar,
-    right_scaler : Scalar
-}
+
 
 pub enum Error {
     HashNotComputable(String),
@@ -24,12 +19,20 @@ pub enum Error {
     UnhandledError()
 }
 
+#[derive(PartialEq, Debug)]
+pub struct VRF {
+    hash_input : Affine,
+    left_scaler : Scalar,
+    right_scaler : Scalar
+}
 
 impl VRF {
     pub fn serialize(&self) -> [u8;97]{
         let mut bytes = [0u8;97];
-        let mut hash_input = Affine::default();
-        hash_input.set_gej(&self.hash_input);
+        let mut hash_input = self.hash_input.clone();
+        hash_input.x.normalize();
+        hash_input.y.normalize();
+
         if hash_input.y.is_odd() {
             bytes[0] = TAG_PUBKEY_ODD;
         }else {
@@ -50,7 +53,8 @@ impl VRF {
     pub fn deserialize(bytes:&[u8;97]) -> Result<Self,Error> {
         let mut hash_input_bytes = [0u8;33];
         copy_elements(&mut hash_input_bytes, &bytes[0..33]);
-        let hash_input = get_jacobian_from_bytes(&hash_input_bytes);
+        let hash_input = get_affine_from_bytes(&hash_input_bytes);
+
         let mut bytes_x = [0u8;32];
         copy_elements(&mut bytes_x, &bytes[33..65]);
         let mut left_scaler = Scalar::default();
@@ -72,7 +76,7 @@ impl VRF {
 
 }
 
-fn get_jacobian_from_bytes(bytes:&[u8;33]) -> Result<Jacobian, Error>{
+fn get_affine_from_bytes(bytes:&[u8;33]) -> Result<Affine, Error>{
     if bytes[0]!=TAG_PUBKEY_EVEN && bytes[0]!=TAG_PUBKEY_ODD{
         return Err(Error::IllegalKeyError());
     }
@@ -82,14 +86,28 @@ fn get_jacobian_from_bytes(bytes:&[u8;33]) -> Result<Jacobian, Error>{
     if !x_coord.set_b32(&x_bytes) {
         return Err(Error::IllegalKeyError());
     }
+    x_coord.normalize();
     let mut affine_point = Affine::default();
 
     if !affine_point.set_xo_var(&x_coord, bytes[0]==TAG_PUBKEY_ODD) {
         return Err(Error::IllegalKeyError());
     }
-    let mut jacobian = Jacobian::default();
-    jacobian.set_ge(&affine_point);
-    Ok(jacobian)
+    affine_point.x.normalize();
+    affine_point.y.normalize();
+    Ok(affine_point)
+}
+
+fn get_jacobian_from_bytes(bytes:&[u8;33]) -> Result<Jacobian, Error>{
+    match get_affine_from_bytes(&bytes) {
+        Ok(affine_point) => {
+            let mut jacobian = Jacobian::default();
+            jacobian.set_ge(&affine_point);
+
+            Ok(jacobian)
+        },
+        Err(_) => Err(Error::IllegalKeyError())
+    }
+
 }
 
 fn get_random_integer()-> Result<Scalar, Error> {
@@ -154,7 +172,7 @@ impl VRFContext{
         }
     }
 
-    fn get_sha2_of_values(&self, l:&Jacobian, r:&Jacobian) -> Scalar{
+    fn get_sha2_of_values(&self, l:&Jacobian, r:&Jacobian, data:&[u8]) -> Scalar{
         let mut oracle_input = [0u8;192];
         let mut oracle_output = [0u8;32];
 
@@ -178,6 +196,7 @@ impl VRFContext{
         let mut sha = Sha256::new();
 
         sha.input(&oracle_input);
+        sha.input(&data);
         let oracle_outputv = sha.result();
         copy_elements(&mut oracle_output, &oracle_outputv[..]);
         let mut value = Scalar::default();
@@ -194,6 +213,8 @@ impl VRFContext{
                 match &self.secret_key{
                     Some(secret_key)=>{
                         ECMULT_CONTEXT.ecmult_const(&mut i_point, &h, &secret_key);
+                        let mut i_point_a = Affine::default();
+                        i_point_a.set_gej(&i_point);
                         match get_random_integer(){
                             Ok(w)=>{
                                 let mut l = Jacobian::default();
@@ -201,13 +222,13 @@ impl VRFContext{
                                 let mut r = Jacobian::default();
                                 ECMULT_CONTEXT.ecmult_const(&mut r, &h, &w);
 
-                                let oracle_output = self.get_sha2_of_values(&l, &r);
+                                let oracle_output = self.get_sha2_of_values(&l, &r, &data);
                                 let d = oracle_output.clone();
                                 let xd = oracle_output * secret_key.clone();
                                 let neg_xd = xd.neg();
                                 let c = w.add(neg_xd);
                                 Ok(VRF{
-                                    hash_input:i_point,
+                                    hash_input:i_point_a,
                                     left_scaler:c,
                                     right_scaler:d
                                 })
@@ -235,14 +256,13 @@ impl VRFContext{
                 ECMULT_CONTEXT.ecmult_const(&mut rl, &h, &vrf.left_scaler);
 
                 let mut rra = Jacobian::default();
-                let mut i = Affine::default();
-                i.set_gej(&vrf.hash_input);
+                let mut i = &vrf.hash_input;
                 ECMULT_CONTEXT.ecmult_const(&mut rra, &i, &vrf.right_scaler);
                 let mut rr = Affine::default();
                 rr.set_gej(&rra);
 
                 let r = rl.add_ge(&rr);
-                let oracle_output = self.get_sha2_of_values(&l,&r);
+                let oracle_output = self.get_sha2_of_values(&l,&r, &data);
 
                 if oracle_output == vrf.right_scaler {
                     Ok(true)
@@ -350,6 +370,40 @@ mod tests {
             Err(_) => panic!()
         }
     }
+
+    #[test]
+    fn test_serialize_deserialize() {
+        match super::get_random_integer(){
+            Ok(secret_key) =>{
+                match super::get_random_integer(){
+                    Ok(data) =>{
+                        let mut data_b = [0u8;32];
+                        data.fill_b32(&mut data_b);
+                        let context = super::VRFContext::new(secret_key);
+                        match context.generate_vrf(&data_b){
+                            Ok(vrf) =>{
+                                let bytes = vrf.serialize();
+                                match super::VRF::deserialize(&bytes){
+                                    Ok(vrf2) =>{
+                                        println!("{:?}",&vrf);
+                                        println!("{:?}",&vrf2);
+                                        assert_eq!(vrf,vrf2);
+
+                                    },
+                                    Err(_) => panic!()
+                                }
+
+                            },
+                            Err(_) => panic!()
+                        }
+                    },
+                    Err(_) => panic!()
+                }
+            },
+            Err(_) => panic!()
+        }
+    }
+
 
 
 }

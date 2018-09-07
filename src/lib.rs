@@ -20,13 +20,10 @@ pub struct VRF {
 pub enum Error {
     HashNotComputable(String),
     IllegalKeyError(),
+    ContextPublicKeyOnly(),
     UnhandledError()
 }
 
-pub struct VRFContext {
-    secret_key:Scalar,
-    public_key:Jacobian,
-}
 
 impl VRF {
     pub fn serialize(&self) -> [u8;97]{
@@ -113,6 +110,11 @@ fn copy_elements(to:&mut [u8], from: &[u8]){
         to[i]=from[i];
     }
 }
+pub struct VRFContext {
+    secret_key:Option<Scalar>,
+    public_key:Jacobian,
+}
+
 impl VRFContext{
     pub fn new(secret_key:Scalar) -> VRFContext{
         VRFContext{
@@ -123,7 +125,7 @@ impl VRFContext{
                 point.y.normalize();
                 point
             },
-            secret_key: secret_key,
+            secret_key: Some(secret_key),
 
         }
     }
@@ -131,7 +133,7 @@ impl VRFContext{
     pub fn new_from_public_key(public_key:Jacobian) -> VRFContext{
         VRFContext{
             public_key: public_key,
-            secret_key: Scalar::default(),
+            secret_key: None,
 
         }
     }
@@ -189,27 +191,34 @@ impl VRFContext{
         match hash_into_group(data){
             Ok(h) => {
                 let mut i_point = Jacobian::default();
-                ECMULT_CONTEXT.ecmult_const(&mut i_point, &h, &self.secret_key);
-                match get_random_integer(){
-                    Ok(w)=>{
-                        let mut l = Jacobian::default();
-                        ECMULT_GEN_CONTEXT.ecmult_gen(&mut l, &w);
-                        let mut r = Jacobian::default();
-                        ECMULT_CONTEXT.ecmult_const(&mut r, &h, &w);
+                match &self.secret_key{
+                    Some(secret_key)=>{
+                        ECMULT_CONTEXT.ecmult_const(&mut i_point, &h, &secret_key);
+                        match get_random_integer(){
+                            Ok(w)=>{
+                                let mut l = Jacobian::default();
+                                ECMULT_GEN_CONTEXT.ecmult_gen(&mut l, &w);
+                                let mut r = Jacobian::default();
+                                ECMULT_CONTEXT.ecmult_const(&mut r, &h, &w);
 
-                        let oracle_output = self.get_sha2_of_values(&l, &r);
-                        let d = oracle_output.clone();
-                        let xd = oracle_output * self.secret_key.clone();
-                        let neg_xd = xd.neg();
-                        let c = w.add(neg_xd);
-                        Ok(VRF{
-                            hash_input:i_point,
-                            left_scaler:c,
-                            right_scaler:d
-                        })
+                                let oracle_output = self.get_sha2_of_values(&l, &r);
+                                let d = oracle_output.clone();
+                                let xd = oracle_output * secret_key.clone();
+                                let neg_xd = xd.neg();
+                                let c = w.add(neg_xd);
+                                Ok(VRF{
+                                    hash_input:i_point,
+                                    left_scaler:c,
+                                    right_scaler:d
+                                })
+                            },
+                            Err(_)=> Err(Error::UnhandledError())
+                        }
+
                     },
-                    Err(_)=> Err(Error::UnhandledError())
+                    None => Err(Error::ContextPublicKeyOnly())
                 }
+
 
             },
             Err(_) => Err(Error::UnhandledError())
